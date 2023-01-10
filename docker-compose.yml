@@ -1,0 +1,11 @@
+version: "3.4"
+
+services:
+  protopy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DEBUG: 1
+      FILE: "task01.py"
+    working_dir: /project

@@ -1,0 +1,11 @@
+{
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": true,
+  "strict": [
+    "*"
+  ],
+  "strictListInference": true,
+  "strictSetInference": true,
+  "strictDictionaryInference": true,
+  "typeCheckingMode": "strict"
+}
