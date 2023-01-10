@@ -4,3 +4,4 @@
 .vscode
 .mypy_cache
 fly.toml
+__pycache__
