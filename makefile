@@ -1,5 +1,5 @@
 SRC := $(wildcard *.py)
-PYTHON := python3
+PYTHON := python
 
 all: help
 
@@ -13,6 +13,7 @@ check:
 	yapf -i ${SRC}
 
 ## run:		run current task
+run: DEBUG=1
 run:
 	@${PYTHON} current.py
 
