@@ -7,5 +7,5 @@
   "strictListInference": true,
   "strictSetInference": true,
   "strictDictionaryInference": true,
-  "typeCheckingMode": "strict"
+  "typeCheckingMode": "basic"
 }
