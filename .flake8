@@ -1,0 +1,4 @@
+[flake8]
+extend-ignore = E203
+exclude = .git,__pycache__,.pyenv,.vscode
+max-complexity = 15

@@ -4,8 +4,13 @@
   "strict": [
     "*"
   ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__"
+  ],
   "strictListInference": true,
   "strictSetInference": true,
   "strictDictionaryInference": true,
-  "typeCheckingMode": "strict"
+  "typeCheckingMode": "strict",
+  "venv": ".pyenv"
 }

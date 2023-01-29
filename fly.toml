@@ -1,24 +1,32 @@
-# fly.toml file generated for protohacker-py on 2023-01-16T10:11:25Z
+# fly.toml file generated for protohacker-py on 2023-01-11T22:09:43Z
 
 app = "protohacker-py"
 kill_signal = "SIGINT"
 kill_timeout = 5
 
 [env]
+  SOCKET_ADDRESS = "fly-global-services"
   TCP_PORT = "8080"
   UDP_PORT = "5000"
-  DEBUG = 1
+  LOGLEVEL = 10
+
+#[[services]]
+#  internal_port = 8080
+#  protocol = "tcp"
+#  [services.concurrency]
+#    hard_limit = 1100
+#    soft_limit = 750
+#
+#  [[services.ports]]
+#    port = "10001"
+#
+#  [[services.tcp_checks]]
+#    interval = "15s"
+#    timeout = "2s"
 
 [[services]]
-  internal_port = 8080
-  protocol = "tcp"
-  [services.concurrency]
-    hard_limit = 1100
-    soft_limit = 750
+  internal_port = 5000
+  protocol = "udp"
 
   [[services.ports]]
-    port = "10001"
-
-  [[services.tcp_checks]]
-    interval = "15s"
-    timeout = "2s"
+    port = 5000
