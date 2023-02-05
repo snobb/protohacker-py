@@ -130,9 +130,8 @@ class Session:
         self.closed = False
         self.rcv_acked = 0
         self.rcv_last = time.time()
-        self.send_total = 0
         self.send_acked = 0
-        self.send_chunks: list[tuple[int, str]] = []
+        self.send_full_data = ""
         self.send_rtx = None
         self.send_rtx_closed = asyncio.Event()
         self.app = App()
@@ -168,7 +167,7 @@ class Session:
             self.log.error(f"invalid message: {msg}")
             return
 
-        if msg.pos > self.send_total:
+        if msg.pos > len(self.send_full_data):
             self.send_close()
             self.close()
         else:
@@ -207,9 +206,9 @@ class Session:
         self.app.write(buf.encode())
         resp = self.app.read().decode()
         if len(resp) > 0:
-            self.send_chunks.append((self.send_total, resp))
-            self.send_data(self.send_total)
-            self.send_total += len(resp)
+            pos = len(self.send_full_data)
+            self.send_full_data = "".join([self.send_full_data, resp])
+            self.send_data(pos)
             self.create_retransmit_task()
 
     def notify(self) -> None:
@@ -250,7 +249,7 @@ class Session:
     async def retransmit(self) -> None:
         self.log.debug("start retransmit")
         await asyncio.sleep(Session.retransmit_interval)
-        while (self.send_acked < self.send_total
+        while (self.send_acked < len(self.send_full_data)
                and not self.send_rtx_closed.is_set()):
             self.log.debug(f"retransmitting {self.send_acked}")
             self.send_data(self.send_acked)
@@ -269,14 +268,10 @@ class Session:
         self.send(f"/ack/{self.sid}/{pos}/")
 
     def send_data(self, pos: int) -> None:
-        for chunk_pos, data in self.send_chunks:
-            if pos >= chunk_pos + len(data):
-                continue
-
-            if pos > chunk_pos:
-                self.send_data_chunk(pos, data[pos - chunk_pos:])
-            else:
-                self.send_data_chunk(chunk_pos, data)
+        while pos < len(self.send_full_data):
+            chunk = self.send_full_data[pos:pos + self.max_payload_size]
+            self.send_data_chunk(pos, chunk)
+            pos += len(chunk)
 
     def send_data_chunk(self, pos: int, data: str) -> None:
         self.log.debug(f"sending data: {pos} {data}")
@@ -360,9 +355,11 @@ async def main(close_event: asyncio.Event) -> None:
     loop = asyncio.get_running_loop()
     exit_future: asyncio.Future[bool] = loop.create_future()
 
+    lrcp = LRCP(log, close_event)
+
     # One protocol instance will be created to serve all client requests.
     transport, protocol = await loop.create_datagram_endpoint(
-        lambda: LRCP(log, close_event), local_addr=(address, port))
+        lambda: lrcp, local_addr=(address, port))
 
     try:
         await exit_future
