@@ -8,8 +8,8 @@ from typing import Self
 
 # 07. Line Reversal - https://protohackers.com/problem/7
 
-logging.basicConfig(level=int(os.getenv("LOGLEVEL", logging.INFO)),
-                    stream=sys.stdout)
+level = getattr(logging, (os.getenv("LOGLEVEL") or "info").upper())
+logging.basicConfig(level=level, stream=sys.stdout)
 
 address = os.getenv("SOCKET_ADDRESS", "127.0.0.1")
 port = int(os.getenv("UDP_PORT", "5000"))
@@ -23,6 +23,10 @@ class ParseError(Exception):
 
 class SessionError(Exception):
     pass
+
+
+def escape_new_line(data: str | bytes) -> str:
+    return str(data).replace("\n", "\\n")
 
 
 class App:
@@ -70,6 +74,9 @@ class Message:
         self.parse(data.decode())
 
     def parse(self, line: str) -> Self:
+        if len(line) == 0:
+            raise ParseError("empty payload")
+
         if line[0] != "/" or line[len(line) - 1] != "/":
             raise ParseError(f"invalid message: {line}")
 
@@ -138,33 +145,36 @@ class Session:
 
     def handle(self, msg: Message) -> None:
         if msg.type == "connect":
+            self.log.debug(f"<<< /connect/{self.sid}/")
             self.handle_connect(msg)
         elif msg.type == "close":
+            self.log.debug(f"<<< /close/{self.sid}/")
             self.handle_close(msg)
         elif msg.type == "ack":
+            self.log.debug(f"<<< /ack/{self.sid}/{msg.pos}")
             self.handle_ack(msg)
         elif msg.type == "data":
+            if msg.data:
+                self.log.debug(f"<<< /data/{self.sid}/{msg.pos}/"
+                               f"{escape_new_line(msg.data)}")
             self.handle_data(msg)
         else:
-            raise SessionError(f"invalid message type: {msg.type}")
+            self.log.error(f"!!! invalid message type: {msg.type}")
 
     def handle_connect(self, msg: Message) -> None:
-        self.log.debug("handling connect message")
         if self.closed:
             self.closed = False
         self.send_ack(0)
 
     def handle_close(self, msg: Message) -> None:
-        self.log.debug("handling close message")
         self.send_close()
         self.close()
 
     def handle_ack(self, msg: Message) -> None:
-        self.log.debug(f"handling ack message: pos:{msg.pos}")
         self.notify()
 
         if msg.pos is None:
-            self.log.error(f"invalid message: {msg}")
+            self.log.error(f"!!! invalid message: {msg}")
             return
 
         if msg.pos > len(self.send_full_data):
@@ -174,11 +184,10 @@ class Session:
             self.send_acked = msg.pos
 
     def handle_data(self, msg: Message) -> None:
-        self.log.debug(f"handling data message: pos:{msg.pos} data:{msg.data}")
         self.notify()
 
         if msg.pos is None or msg.data is None:
-            self.log.error(f"invalid message: {msg}")
+            self.log.error(f"!!! invalid message: {msg}")
             return
 
         if msg.pos > self.rcv_acked:
@@ -247,11 +256,11 @@ class Session:
         return data.replace("\\/", "/").replace("\\\\", "\\")
 
     async def retransmit(self) -> None:
-        self.log.debug("start retransmit")
+        self.log.debug("!>> start retransmit")
         await asyncio.sleep(Session.retransmit_interval)
         while (self.send_acked < len(self.send_full_data)
                and not self.send_rtx_closed.is_set()):
-            self.log.debug(f"retransmitting {self.send_acked}")
+            self.log.debug(f"!>> retransmit {self.send_acked}")
             self.send_data(self.send_acked)
             await asyncio.sleep(Session.retransmit_interval)
         if self.send_rtx is not None:
@@ -261,7 +270,7 @@ class Session:
 
     def create_retransmit_task(self) -> None:
         if self.send_rtx is None:
-            self.log.debug("start retransmit task")
+            self.log.debug("^^^ start retransmit task")
             self.send_rtx = asyncio.Task(self.retransmit())
 
     def send_ack(self, pos: int) -> None:
@@ -274,7 +283,6 @@ class Session:
             pos += len(chunk)
 
     def send_data_chunk(self, pos: int, data: str) -> None:
-        self.log.debug(f"sending data: {pos} {data}")
         self.send(f"/data/{self.sid}/{pos}/{self.escape(data)}/")
 
     def send_close(self) -> None:
@@ -282,10 +290,10 @@ class Session:
 
     def send(self, msg: str) -> None:
         if len(msg) > 1000:
-            self.log.error(f"send: message is too big: {msg}")
+            self.log.error(f">>> message is too big: {len(msg)}")
             return
 
-        self.log.debug(f"send: {msg}")
+        self.log.debug(f">>> {escape_new_line(msg)}")
         self.transport.sendto(msg.encode(), self.addr)
 
 
@@ -299,7 +307,11 @@ class LRCP(asyncio.DatagramProtocol):
         self.close_event = close_event
         self.sessions: dict[int, Session] = {}
         self.log.info("initialised")
-        self.sweeper_task = asyncio.Task(self.sweep_sessions())
+
+        try:
+            self.sweeper_task = asyncio.Task(self.sweep_sessions())
+        except Exception as e:
+            self.log.error(f"!!! sweeper error {e}")
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
         self.transport = transport
@@ -310,6 +322,7 @@ class LRCP(asyncio.DatagramProtocol):
         try:
             msg = Message(data)
             log = self.log.getChild(f"{addr_port}:sid-{msg.sid}")
+
             try:
                 session = self.sessions[msg.sid]
             except KeyError:
@@ -326,12 +339,6 @@ class LRCP(asyncio.DatagramProtocol):
         except ParseError as err:
             self.log.error(f"parse error: {err}")
 
-    def error_received(self, exc: Exception) -> None:
-        self.log.error(f"connection lost: {exc}")
-
-    def connection_lost(self, exc: Exception | None) -> None:
-        self.log.debug(f"connection lost: {exc}")
-
     async def sweep_sessions(self) -> None:
         while not self.close_event.is_set():
             for sid, session in self.sessions.items():
@@ -340,7 +347,7 @@ class LRCP(asyncio.DatagramProtocol):
                     continue
 
                 if session.is_expired():
-                    self.log.info(f"session has expired: {sid}")
+                    self.log.info(f"!!! session has expired: {sid}")
                     session.close()
                     del self.sessions[sid]
 
