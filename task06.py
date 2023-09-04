@@ -94,7 +94,7 @@ class Ticket:
         self.timestamp2 = timestamp2
         self.speed = speed
 
-    async def write_to(self, writer: asyncio.StreamWriter) -> Self:
+    async def write_to(self, writer: asyncio.StreamWriter) -> None:
         print(f"Sending ticket {self}")
         writer.write(
             struct.pack(f"!BB{len(self.plate)}sHHIHIH", MsgType.TICKET,
@@ -116,7 +116,7 @@ class SpeedError(Exception):
         self.message = message
         super().__init__(self.message)
 
-    async def write_to(self, writer: asyncio.StreamWriter) -> Self:
+    async def write_to(self, writer: asyncio.StreamWriter) -> None:
         msg = self.message.encode()
         writer.write(
             struct.pack(f"!BB{len(msg)}s", MsgType.ERROR, len(msg), msg))
