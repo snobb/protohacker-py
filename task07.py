@@ -142,6 +142,7 @@ class Session:
         self.send_rtx = None
         self.send_rtx_closed = asyncio.Event()
         self.app = App()
+        self.send_rtx = asyncio.Task(self.retransmit())
 
     def handle(self, msg: Message) -> None:
         if msg.type == "connect":
@@ -151,7 +152,7 @@ class Session:
             self.log.debug(f"<<< /close/{self.sid}/")
             self.handle_close(msg)
         elif msg.type == "ack":
-            self.log.debug(f"<<< /ack/{self.sid}/{msg.pos}")
+            self.log.debug(f"<<< /ack/{self.sid}/{msg.pos}/")
             self.handle_ack(msg)
         elif msg.type == "data":
             if msg.data:
@@ -199,7 +200,6 @@ class Session:
             self.send_ack(self.rcv_acked)
             # resend all unacked chunks
             self.send_data(msg.pos)
-            self.create_retransmit_task()
 
         else:
             # have all data up to pos + the current buffer
@@ -218,7 +218,6 @@ class Session:
             pos = len(self.send_full_data)
             self.send_full_data = "".join([self.send_full_data, resp])
             self.send_data(pos)
-            self.create_retransmit_task()
 
     def notify(self) -> None:
         self.rcv_last = time.time()
@@ -256,22 +255,16 @@ class Session:
         return data.replace("\\/", "/").replace("\\\\", "\\")
 
     async def retransmit(self) -> None:
-        self.log.debug("!>> start retransmit")
-        await asyncio.sleep(Session.retransmit_interval)
-        while (self.send_acked < len(self.send_full_data)
-               and not self.send_rtx_closed.is_set()):
-            self.log.debug(f"!>> retransmit {self.send_acked}")
-            self.send_data(self.send_acked)
-            await asyncio.sleep(Session.retransmit_interval)
+        while not self.send_rtx_closed.is_set():
+            if self.send_acked < len(self.send_full_data):
+                await asyncio.sleep(Session.retransmit_interval)
+                self.log.debug(f"!>> retransmit {self.send_acked}")
+                self.send_data(self.send_acked)
+            await asyncio.sleep(1)
+
         if self.send_rtx is not None:
             self.send_rtx.cancel()
             self.send_rtx = None
-        self.send_rtx_closed.clear()
-
-    def create_retransmit_task(self) -> None:
-        if self.send_rtx is None:
-            self.log.debug("^^^ start retransmit task")
-            self.send_rtx = asyncio.Task(self.retransmit())
 
     def send_ack(self, pos: int) -> None:
         self.send(f"/ack/{self.sid}/{pos}/")
@@ -340,19 +333,21 @@ class LRCP(asyncio.DatagramProtocol):
             self.log.error(f"parse error: {err}")
 
     async def sweep_sessions(self) -> None:
-        while not self.close_event.is_set():
-            for sid, session in self.sessions.items():
-                if session.is_closed():
-                    del self.sessions[sid]
-                    continue
+        try:
+            while not self.close_event.is_set():
+                for sid, session in self.sessions.items():
+                    if session.is_closed():
+                        del self.sessions[sid]
+                        continue
 
-                if session.is_expired():
-                    self.log.info(f"!!! session has expired: {sid}")
-                    session.close()
-                    del self.sessions[sid]
+                    if session.is_expired():
+                        self.log.info(f"!!! session has expired: {sid}")
+                        session.close()
+                        del self.sessions[sid]
 
-            await asyncio.sleep(LRCP.sweeper_interval)
-        self.sweeper_task.cancel()
+                await asyncio.sleep(LRCP.sweeper_interval)
+        finally:
+            self.sweeper_task.cancel()
 
 
 async def main(close_event: asyncio.Event) -> None:
